@@ -15,13 +15,68 @@ add_filter('PricerrTheme_payment_methods_action', 'PricerrTheme_add_new_beyonic_
 add_filter('PricerrTheme_payment_methods_content_divs', 'PricerrTheme_add_new_beyonic_cnt');
 add_filter('admin_init', 'beyonic_pricerr_temp_redir');
 add_filter('PricerrTheme_withdraw_method', 'PricerrTheme_withdraw_method_beyonic');
-add_action('PricerrTheme_payments_withdraw_options', 'PricerrTheme_payments_withdraw_beyonic'); // add withdraw form
-// enable rest api for post responses
-add_filter('json_enabled', '__return_true');
-add_filter('json_jsonp_enabled', '__return_true');
+// add withdraw form
+add_action('PricerrTheme_payments_withdraw_options', 'PricerrTheme_payments_withdraw_beyonic');
+// hook into deposit function
+add_action('pricerrtheme_deposit_payment_gateways', 'PricerrTheme_payments_deposit_beyonic');
 
 /**
- * function that generates a form to capture user details, phone number, amount
+ * function that generates a form to capture user details, phone number, amount while adding money to the e-wallet
+ */
+function PricerrTheme_payments_deposit_beyonic()
+{
+    $PricerrTheme_beyonic_enable = get_option('PricerrTheme_beyonic_enable');
+    if ($PricerrTheme_beyonic_enable == "yes"):
+        ?>
+        <br/><br/>
+        <div class="box_title3 mt-4 mb-4">
+            <div class="inner-me"><?php _e('Transfer From Mobile Money', 'pricerrtheme') ?></div>
+        </div>
+
+        <table class="skf">
+            <form method="post" enctype="application/x-www-form-urlencoded">
+                <input type="hidden" value="<?php echo current_time('timestamp', 0) ?>"
+                       name="tm_tm"/>
+                <tr>
+                    <td>
+                        <!-- added this input to help identify beyonic payment when setting payment method (PricerrTheme_withdraw_method_beyonic())--></td>
+                    <td><input value="1" type="number" contentEditable="false" hidden
+                               name="PricerrTheme_beyonic_input"/></td>
+                </tr>
+                <tr>
+                    <td><?php _e('Deposit amount:', 'pricerrtheme'); ?></td>
+                    <td>
+                        <input value="<?php echo isset($_POST['PricerrTheme_beyonic_input']) ? $_POST['amount10'] : ''; ?>"
+                               type="number" size="10" min="1" name="amount10"
+                               required/> <?php echo PricerrTheme_get_currency(); ?></td>
+                </tr>
+                <tr>
+                    <td><?php _e('Phone Number (in international format e.g +256701123456):', 'pricerrtheme'); ?></td>
+                    <!-- using paypal since it is the variable that is saved in database(finances.php) under job_withdraws(...,payeremail,....) --->
+                    <td>
+                        <input value="<?php echo isset($_POST['PricerrTheme_beyonic_input']) ? $_POST['paypal'] : ''; ?>"
+                               type="text" maxlength="14" minlength="10"
+                               pattern="[+]{1}[0-9]{3}[0-9]{9}"
+                               name="paypal" required/></td>
+                </tr>
+                </tr>
+
+                <tr>
+                    <td></td>
+                    <td>
+                        <!-- use name=withdraw10 to bypass email validation -- but should not be used with banking input-->
+                        <input type="submit" name="withdraw10"
+                               class="btn btn-primary green-button-me"
+                               value="<?php _e('Deposit', 'pricerrtheme'); ?>"/></td>
+                </tr>
+            </form>
+        </table>
+    <?php endif;
+
+}
+
+/**TODO add phone no sms verification
+ * function that generates a form to capture user details, phone number, amount while requesting a withdraw
  */
 function PricerrTheme_payments_withdraw_beyonic()
 {
@@ -30,7 +85,7 @@ function PricerrTheme_payments_withdraw_beyonic()
         ?>
         <br/><br/>
         <div class="box_title3 mt-4 mb-4">
-            <div class="inner-me"><?php _e('Withdraw by beyonic', 'pricerrtheme') ?></div>
+            <div class="inner-me"><?php _e('Withdraw by Mobile Money', 'pricerrtheme') ?></div>
         </div>
 
         <table class="skf">
@@ -52,11 +107,11 @@ function PricerrTheme_payments_withdraw_beyonic()
                 </tr>
                 <tr>
                     <td><?php _e('Phone Number (in international format e.g +256701123456):', 'pricerrtheme'); ?></td>
-                    <!-- TODO add phone No pattern-->
                     <!-- using paypal since it is the variable that is saved in database(finances.php) under job_withdraws(...,payeremail,....) --->
                     <td>
                         <input value="<?php echo isset($_POST['PricerrTheme_beyonic_input']) ? $_POST['paypal'] : ''; ?>"
                                type="text" maxlength="14" minlength="10"
+                               pattern="[+]{1}[0-9]{3}[0-9]{9}"
                                name="paypal" required/></td>
                 </tr>
                 </tr>
@@ -71,7 +126,6 @@ function PricerrTheme_payments_withdraw_beyonic()
                 </tr>
             </form>
         </table>
-
     <?php endif;
 
 }
@@ -86,10 +140,6 @@ function PricerrTheme_withdraw_method_beyonic($method)
     $PricerrTheme_beyonic_post_option = $_POST['PricerrTheme_beyonic_input']; // name of unique input on withdraw form - PricerrTheme_payments_withdraw_beyonic
     if (($PricerrTheme_beyonic_enable == "yes") && isset($PricerrTheme_beyonic_post_option)) {
         $method = 'Beyonic';
-        // phone no validation while submitting withdraw form TODO add client side validator
-        /*if (isset($_POST['PricerrTheme_beyonic_input'])) {
-            validatePhoneNo($_POST['paypal']);
-        }*/
     }
     return $method;
 }
@@ -338,9 +388,10 @@ function validatePhoneNo($phoneNo)
 {
     $phoneNo = trim($phoneNo);
     $phoneNo = str_replace(['(', ')', '-'], '', $phoneNo);
-    $regex = '/^[+]{0,1}[(]{0,1}[0-9]{3}[)]{0,1}[0-9]{9}|[+]{0,1}[(]{0,1}[0-9]{3}[)]{0,1}[-]{0,1}[0-9]{9}|[+]{0,1}[(]{0,1}[0-9]{3}[)]{0,1}[-]{0,1}[0-9]{3}[-]{0,1}[0-9]{3}[-]{0,1}[0-9]{3}[-]{0,1}$/m';;
-    $verify = static function ($phnNo) use ($regex) {
-        $match = preg_match($regex, $phnNo);
+    // $regex = '/^[+]{0,1}[(]{0,1}[0-9]{3}[)]{0,1}[0-9]{9}|[+]{0,1}[(]{0,1}[0-9]{3}[)]{0,1}[-]{0,1}[0-9]{9}|[+]{0,1}[(]{0,1}[0-9]{3}[)]{0,1}[-]{0,1}[0-9]{3}[-]{0,1}[0-9]{3}[-]{0,1}[0-9]{3}[-]{0,1}$/m';;
+    $regex_simple = '/^[+]{1}[0-9]{3}[0-9]{9}$/m'; // only support one format
+    $verify = static function ($phnNo) use ($regex_simple) {
+        $match = preg_match($regex_simple, $phnNo);
         return strlen($phnNo) >= 10 && strlen($phnNo) <= 14 && $match;
     };
     if (!$verify($phoneNo)) {
@@ -381,7 +432,6 @@ function PricerrTheme_add_new_beyonic_pst()
 {
 
     if (isset($_POST['PricerrTheme_save_beyonic'])):
-
         $PricerrTheme_beyonic_api_key = trim($_POST['PricerrTheme_beyonic_api_key']);
         $PricerrTheme_beyonic_enable = $_POST['PricerrTheme_beyonic_enable'];
         $PricerrTheme_beyonic_withdraw_fee = $_POST['PricerrTheme_beyonic_withdraw_fee'];
@@ -473,6 +523,5 @@ function PricerrTheme_add_new_beyonic_cnt()
     <?php
 
 }
-
 
 ?>
