@@ -1,6 +1,8 @@
 <?php
 // make sure sessions work on the page
-session_start();
+if (session_status() == PHP_SESSION_NONE) {
+    session_start();
+}
 
 class Flash
 {
@@ -38,8 +40,18 @@ class Flash
         }
     }
 
+    public static function getAll(): string
+    {
+        $ret = '';
+        foreach (self::$messages as $id => $msg) {
+            $ret .= $msg;
+        }
+        return $ret;
+    }
+
     private function getMsg($id, $msg): string
     {
+        // backend alert
         if ($id == 'info') {
             return '<div id="message" class="updated notice is-dismissible rlrsssl-htaccess">
               <p>' . $msg . '</p>
@@ -55,6 +67,13 @@ class Flash
               <span class="screen-reader-text">Dismiss this notice.</span>
               </button>
               </div>';
+        }
+        // front end alert
+        if ($id == 'fInfo') {
+            return '<div class="alert alert-success"><p>' . $msg . '</p></div>';
+        }
+        if ($id == 'fError') {
+            return '<div class="alert alert-danger"><p>' . $msg . '</p></div>';
         }
     }
 }
