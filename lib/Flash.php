@@ -75,6 +75,7 @@ class Flash
         if ($id == 'fError') {
             return '<div class="alert alert-danger"><p>' . $msg . '</p></div>';
         }
+        return '';
     }
 }
 

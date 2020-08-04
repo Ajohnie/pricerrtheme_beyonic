@@ -9,6 +9,7 @@ Version: 1.0
 Text Domain: beyonic_gateways
 */
 
+ini_set('display_errors', '1');
 
 add_filter('PricerrTheme_payment_methods_tabs', 'PricerrTheme_add_new_beyonic_tab');
 add_filter('PricerrTheme_payment_methods_action', 'PricerrTheme_add_new_beyonic_pst');
@@ -19,6 +20,193 @@ add_filter('PricerrTheme_withdraw_method', 'PricerrTheme_withdraw_method_beyonic
 add_action('PricerrTheme_payments_withdraw_options', 'PricerrTheme_payments_withdraw_beyonic');
 // hook into deposit function
 add_action('pricerrtheme_deposit_payment_gateways', 'PricerrTheme_payments_deposit_beyonic');
+//configure rest for this plugin
+remove_filter('rest_pre_serve_request', 'rest_send_cors_headers');
+add_filter('rest_pre_serve_request', static function ($value) {
+    $origin = 'https://app.beyonic.com'; // http://localhost:8888/nyumba_v2_api/
+    header('Access-Control-Allow-Origin: ' . esc_url_raw($origin));
+    header('Access-Control-Allow-Methods: POST, GET, OPTIONS, PUT');
+    header('Access-Control-Allow-Credentials: true');
+    return $value;
+});
+// limit no of posts per page to 1
+add_filter('rest_query_var-posts_per_page', static function ($posts_per_page) {
+    if (1 < (int)$posts_per_page) {
+        $posts_per_page = 1;
+    }
+    return $posts_per_page;
+});
+
+// register routes after initialisation of wp
+add_action('init', 'registerRoutes');
+function registerRoutes()
+{
+    // register custom routes to handle payment requests
+    register_rest_route('beyonic-api', '/payments', array(
+        'methods' => WP_REST_Server::CREATABLE,
+        'callback' => 'handlePayment',
+        'permission_callback' => 'checkBeyonicPermissions',
+    ));
+    // register custom routes to handle collection requests
+    register_rest_route('beyonic-api', '/collections', array(
+        'methods' => WP_REST_Server::CREATABLE,
+        'callback' => 'handleCollection',
+        'permission_callback' => 'checkBeyonicPermissions',
+    ));
+}
+
+// register javascript to handle ajax requests on backend
+add_action('admin_enqueue_scripts', 'adminBeyonicJs');
+function adminBeyonicJs()
+{
+    // Enqueue javascript
+    wp_enqueue_script('beyonic-admin', plugin_dir_url(__FILE__) . 'lib/beyonic-admin.js',
+        array('jquery')
+    );
+
+    // The wp_localize_script allows us to output the ajax_url path for our script to use.
+    wp_localize_script('beyonic-admin', 'beyonicObj',
+        array('ajaxurl' => admin_url('admin-ajax.php'), 'nonce' => wp_create_nonce('ajax-nonce'))
+    );
+
+}
+
+// register javascript to handle ajax requests on front end
+add_action('wp_enqueue_scripts', 'clientBeyonicJs');
+function clientBeyonicJs()
+{
+    wp_enqueue_script('beyonic-client', plugin_dir_url(__FILE__) . 'lib/beyonic-client.js',
+        array('jquery')
+    );
+
+    // The wp_localize_script allows us to output the ajax_url path for our script to use.
+    wp_localize_script('beyonic-client', 'beyonicObj',
+        array('ajaxurl' => admin_url('admin-ajax.php'), 'nonce' => wp_create_nonce('ajax-nonce'))
+    );
+
+}
+
+
+/** caches to options table, used with ajax to keep track of status of beyonic requests
+ * @param $key //name of transient
+ * @param null $value // value to set to transient
+ * @param false $delete // delete transient after use
+ * @return number|string|boolean
+ */
+function cacheRequest($key, $value = null, $delete = false)
+{
+    if ($delete) {
+        return delete_transient($key);
+    }
+    if ($value !== null) {
+        return set_transient($key, $value, 0);
+    }
+    return get_transient($key);
+}
+
+/** returns cache key, for consistency when using cache function
+ * @param $row_id
+ * @param bool $id // used to track old Requests, when true, it returns request_id, otherwise it returns status
+ * @return string
+ */
+function getCacheKey($row_id, $id = false)
+{
+    if ($id) {
+        return 'BeyonicRequestId' . $row_id;
+    }
+    return 'BeyonicRequest' . $row_id;
+}
+
+/** converts array from beyonic api post request to object
+ * @param $array
+ * @return stdClass
+ */
+function arrayToObject($array)
+{
+    $object = new stdClass();
+    foreach ($array as $key => $value) {
+        if (is_array($value)) {
+            $object->$key = arrayToObject($value);
+        } else {
+            $object->$key = $value;
+        }
+    }
+    return $object;
+}
+
+/**
+ * process beyonic payment and updates database
+ * @param WP_REST_Request $request Full details about the request
+ *
+ * @return WP_Error|WP_HTTP_Response|WP_REST_Response
+ */
+function handlePayment($request)
+{
+    $response = rest_ensure_response(new WP_REST_Response('Ok !', 200));
+    $body = $request->get_body_params();
+    if (!isset($body)) { // empty body
+        return $response;
+    }
+    if (is_string($body)) { // json body
+        $body = json_decode($body, false); // change to object
+    }
+    if (is_array($body)) { // change to object
+        $body = arrayToObject($body);
+    }
+    $row_id = $body->data->metadata->id;
+    if (isset($row_id)) { // response from beyonic through webhook api
+        $payment = $body->data;
+        $goOn = checkPayment($payment, $row_id, true);
+        if ($goOn === 1) {
+            // payment was successful, update database(set withdraw request as resolved)
+            global $wpdb; // link to wordpress database object
+            $s = "select * from " . $wpdb->prefix . "job_withdraw where id='$row_id'";
+            $row = $wpdb->get_results($s);
+            if (isset($row)) {
+                $row = $row[0];
+                $tm = current_time('timestamp', 0);
+                $ss = "update " . $wpdb->prefix . "job_withdraw set done='1', datedone='$tm' where id='$row_id'";
+                $wpdb->query($ss);
+
+                // send email to admin (again -- request might have delayed at beyonic api)
+                PricerrTheme_send_email_when_withdraw_completed($row->uid, $row->methods, PricerrTheme_get_show_price($row->amount));
+
+                $reason = sprintf(__('Mobile Withdraw to %s - Details: %s', 'pricerrtheme'), $row->methods, $row->payeremail);
+
+                // log to history again
+                PricerrTheme_add_history_log('0', $reason, $row->amount, $row->uid);
+            }
+        }
+        // update request status for ajax query
+        cacheRequest(getCacheKey($row_id), $goOn);
+    }
+    return $response;
+}
+
+/** process beyonic collection and updates database
+ * @param WP_REST_Request $request Full details about the request
+ *
+ * @return WP_Error|WP_HTTP_Response|WP_REST_Response
+ */
+function handleCollection($request)
+{
+    $data = $request->get_body_params();
+    $state = $data['data']['state'];
+    return rest_ensure_response(new WP_REST_Response('Read You Aloud and Clear !', 200));
+}
+
+
+/** process authorization header and return true or false
+ * @param $request WP_REST_Request
+ * @return boolean
+ */
+function checkBeyonicPermissions($request)
+{
+    $auth = $request->get_header('authorization');
+    // username set in beyonic account
+    // password set in beyonic account
+    return true;
+}
 
 function makeRequest($amount, $phoneNo, $retry = false)
 {
@@ -85,10 +273,10 @@ function makeRequest($amount, $phoneNo, $retry = false)
         $beyonicData['last_name'] = 'user';
     }
     if ($callback_url) {
-        array_merge($beyonicData, ['callback_url' => $callback_url]);
+        // $beyonicData = array_merge($beyonicData, ['callback_url' => $callback_url]);
     }
     if ($account) {
-        array_merge($beyonicData, ['account' => $account->id]);
+        $beyonicData = array_merge($beyonicData, ['account' => $account->id]);
     }
     $collection = null;
     if (session_status() == PHP_SESSION_NONE) {
@@ -298,6 +486,10 @@ function PricerrTheme_payments_deposit_beyonic()
     <?php endif;
 }
 
+/**
+ * @param $collection // collection object from beyonic
+ * @return int // 0, 1 ,2
+ */
 function checkCollection($collection)
 {
     $cache_key = 'oldBeyonicCollection' . $collection->amount . $collection->phonenumber . $collection->metadata->uid;
@@ -401,30 +593,6 @@ function beyonic_pricerr_temp_redir()
 {
     include 'lib/Flash.php';
     Flash::show();
-    if (!empty($_GET['beyonic_response_withdraw_request'])) { // response from beyonic through webhook api
-        // payment was successful, update database(set withdraw request as resolved)
-        global $wpdb; // link to wordpress database object
-        $row_id = $_GET['beyonic_response_withdraw_request'];
-        $s = "select * from " . $wpdb->prefix . "job_withdraw where id='$row_id'";
-        $row = $wpdb->get_results($s);
-        if (isset($row)) {
-            $row = $row[0];
-            $tm = current_time('timestamp', 0);
-            $ss = "update " . $wpdb->prefix . "job_withdraw set done='1', datedone='$tm' where id='$row_id'";
-            $wpdb->query($ss);
-
-            // send email to admin (again -- request might have delayed at beyonic api)
-            PricerrTheme_send_email_when_withdraw_completed($row->uid, $row->methods, PricerrTheme_get_show_price($row->amount));
-
-            $reason = sprintf(__('Mobile Withdraw to %s - Details: %s', 'pricerrtheme'), $row->methods, $row->payeremail);
-
-            // log to history again
-            PricerrTheme_add_history_log('0', $reason, $row->amount, $row->uid);
-            wp_redirect(get_site_url()); // redirect to any appropriate page
-            exit;
-        }
-    }
-
     // payment was accepted from withdraw requests options, make payment request to beyonic api
     if (isset($_GET['page'], $_GET['tid']) && $_GET['page'] == 'withdraw-req') {
         global $wpdb; // link to wordpress database object
@@ -436,111 +604,16 @@ function beyonic_pricerr_temp_redir()
         $row = $row[0];
         $method = $row->methods;
         if ($row->done == 0 && $method == 'Beyonic') {
-            include 'lib/Beyonic.php'; // import beyonic php lib
-            $api_key = get_option('PricerrTheme_beyonic_api_key');//api key set in admin tab of beyonic
-            if (empty($api_key)) { // api key not set, so throw error
-                Flash::add('error', __('Please Set Api Key In Payment Gateways under beyonic tab!', 'pricerrtheme'));
-                wp_redirect(wp_get_referer());
-                return;
-            }
-            $webHook_id = get_option('PricerrTheme_beyonic_webHook_id');//webhook id set in admin tab of beyonic
-            $withdrawFee = get_option('PricerrTheme_beyonic_withdraw_fee');
-            $account_id = get_option('PricerrTheme_beyonic_account_Id');//account id set in admin tab of beyonic
-            $account_fname = null; // TODO get from database from payeremail field
-            $account_lname = null;
-            /*if (empty($account_fname) || empty($account_lname)) {
-                Flash::add('error', __('Fname And Lname Cannot Be Empty !', 'pricerrtheme'));
-                wp_redirect(wp_get_referer());
-                return;
-            }*/
-            if (empty($withdrawFee)) {
-                $withdrawFee = 0; // withdraw fee not set in options config, default it to zero
-            }
-
-            $user = getBeyonicUser($row->uid);
-            if (!isset($user)) {
-                $account_fname = 'Kyeeyo'; // john
-                $account_lname = 'user'; // doe
-            } else {
-                $account_fname = $user->display_name;
-                $account_lname = $user->user_nicename;
-            }
-            if (!isset($row->payeremail)) {
-                Flash::add('error', __('Missing Phone No', 'pricerrtheme'));
-                wp_redirect(wp_get_referer());
-                return;
-            }
-            $phoneNo = validatePhoneNo($row->payeremail);
-            if (!$phoneNo) {
-                Flash::add('error', __('Phone No invalid or Not Supported !', 'pricerrtheme'));
-                wp_redirect(wp_get_referer());
-                return;
-            }
-            $amount = $row->amount - $withdrawFee;
-            if ($amount === 0) {
-                Flash::add('error', __('Amount minus withdraw Fee is Zero', 'pricerrtheme'));
-                wp_redirect(wp_get_referer());
-                return;
-            }
-            $currency = PricerrTheme_get_currency();
-            $callback_url = null;
-            $account = null;
-            Beyonic::setApiKey($api_key);
-            if (!empty($webHook_id)) {
-                $hook = Beyonic_Webhook::get($webHook_id);
-                if ($hook->target === null) {
-                    Flash::add('error', __('Wrong Web Hook Id, Please get the correct Web Hook Id from Your Beyonic Account', 'pricerrtheme'));
-                    wp_redirect(wp_get_referer());
-                    return;
-                }
-                $callback_url = $hook->target;
-            }
-            if (!empty($account_id)) {
-                $acc = Beyonic_Account::get($account_id);
-                if ($acc->id === null) {
-                    Flash::add('error', __('Wrong Account Id, Please get the correct Account Id from Your Beyonic Account', 'pricerrtheme'));
-                    wp_redirect(wp_get_referer());
-                    return;
-                }
-                $account = $acc;
-            }
-            $beyonicData = array(
-                "phonenumber" => $phoneNo,
-                "first_name" => $account_fname, // include if they were captured on the form
-                "last_name" => $account_lname,
-                "amount" => $amount,
-                "currency" => $currency,
-                "description" => "payment",
-                "payment_type" => "money",
-                "metadata" => array("id" => $row_id, 'withdrawFee' => $withdrawFee)
-            );
-            if (!isset($beyonicData['first_name'])) {
-                $beyonicData['first_name'] = 'Kyeeyo';
-            }
-            if (!isset($beyonicData['last_name'])) {
-                $beyonicData['last_name'] = 'user';
-            }
-            if ($callback_url) {
-                array_merge($beyonicData, ['callback_url' => $callback_url]);
-            }
-            if ($account) {
-                if ($account->balance < $beyonicData['amount']) {
-                    Flash::add('error', __('Insufficient Account Balance, Please Add funds To the Account and try Again', 'pricerrtheme'));
-                    wp_redirect(wp_get_referer());
-                    return;
-                }
-                array_merge($beyonicData, ['account' => $account->id]);
-            }
             $payment = null;
             if (session_status() == PHP_SESSION_NONE) {
                 session_start();
             }
             // check for old payments
-            // check session for old payment id TODO use caching to span across sessions
-            $cache_key = 'oldBeyonicPayment' . $row_id;
-            if (isset($_SESSION[$cache_key])) {
-                $payment = Beyonic_Payment::get($_SESSION[$cache_key]);
-            } else {
+            // check cache for old payment id
+            $cached_payment_id = cacheRequest(getCacheKey($row_id, true));
+            if (is_numeric($cached_payment_id)) {
+                $payment = Beyonic_Payment::get($cached_payment_id);
+            } else { // TODO remove, not executed
                 // get old payment from Api
                 // get one payment to estimate total records
                 $counter = Beyonic_Payment::getAll(array('limit' => 1, 'offset' => 0, 'amount' => $beyonicData['amount'], 'currency' => $beyonicData['currency']));
@@ -555,63 +628,178 @@ function beyonic_pricerr_temp_redir()
                     $keys = array_keys($filtered); // get original array indices
                     $key = $keys[count($keys) - 1]; // extract last key which is the latest
                     $payment = $oldPayments['results'][$key];
-                    $_SESSION[$cache_key] = $payment->id; // write id to session to prevent future computations
+                    cacheRequest(getCacheKey($row_id, true), $payment->id);// write id to cache to prevent future computations
                 }
             }
 
             if ($payment) {
                 Flash::add('info', __('Payment Already Queued !', 'pricerrtheme'));
-                checkPayment($payment, $row_id);
             } else {
-                $payment = Beyonic_Payment::create($beyonicData);
-                $counter = 0;
-                $pState = $payment->state;
-                while ($pState == 'new' || $pState == 'scheduled') { // wait for payment status to change, from new to scheduled to processed
-                    if ($counter > 5) { // if state has not changed in 5 sec, exit the loop, leave the rest to the callback url
-                        break;
-                    }
-                    sleep(1); // wait 1 seconds
-                    $pState = Beyonic_Payment::get($payment->id)->state;
-                    $counter++;
+                include 'lib/Beyonic.php'; // import beyonic php lib
+                $api_key = get_option('PricerrTheme_beyonic_api_key');//api key set in admin tab of beyonic
+                if (empty($api_key)) { // api key not set, so throw error
+                    Flash::add('error', __('Please Set Api Key In Payment Gateways under beyonic tab!', 'pricerrtheme'));
+                    wp_redirect(wp_get_referer());
+                    return;
                 }
-                $_SESSION[$cache_key] = $payment->id; // write id to session to prevent future computations
-                checkPayment($payment, $row_id);
+                // TODO remove option and check if webhook exists in beyonic, otherwise add it
+                $webHook_id = get_option('PricerrTheme_beyonic_webHook_id');//webhook id set in admin tab of beyonic
+                $withdrawFee = get_option('PricerrTheme_beyonic_withdraw_fee');
+                $account_id = get_option('PricerrTheme_beyonic_account_Id');//account id set in admin tab of beyonic
+                $account_fname = null; // TODO get from database from payeremail field
+                $account_lname = null;
+                /*if (empty($account_fname) || empty($account_lname)) {
+                    Flash::add('error', __('Fname And Lname Cannot Be Empty !', 'pricerrtheme'));
+                    wp_redirect(wp_get_referer());
+                    return;
+                }*/
+                if (empty($withdrawFee)) {
+                    $withdrawFee = 0; // withdraw fee not set in options config, default it to zero
+                }
+
+                $user = getBeyonicUser($row->uid);
+                if (!isset($user)) {
+                    $account_fname = 'Kyeeyo'; // john
+                    $account_lname = 'user'; // doe
+                } else {
+                    $account_fname = $user->display_name;
+                    $account_lname = $user->user_nicename;
+                }
+                if (!isset($row->payeremail)) {
+                    Flash::add('error', __('Missing Phone No', 'pricerrtheme'));
+                    wp_redirect(wp_get_referer());
+                    return;
+                }
+                $phoneNo = validatePhoneNo($row->payeremail);
+                if (!$phoneNo) {
+                    Flash::add('error', __('Phone No invalid or Not Supported !', 'pricerrtheme'));
+                    wp_redirect(wp_get_referer());
+                    return;
+                }
+                $amount = $row->amount - $withdrawFee;
+                if ($amount === 0) {
+                    Flash::add('error', __('Amount minus withdraw Fee is Zero', 'pricerrtheme'));
+                    wp_redirect(wp_get_referer());
+                    return;
+                }
+                $currency = PricerrTheme_get_currency();
+                $callback_url = null;
+                $account = null;
+                Beyonic::setApiKey($api_key);
+                if (!empty($webHook_id)) {
+                    $hook = Beyonic_Webhook::get($webHook_id);
+                    if ($hook->target === null) {
+                        Flash::add('error', __('Wrong Web Hook Id, Please get the correct Web Hook Id from Your Beyonic Account', 'pricerrtheme'));
+                        wp_redirect(wp_get_referer());
+                        return;
+                    }
+                    $callback_url = $hook->target;
+                }
+                if (!empty($account_id)) {
+                    $acc = Beyonic_Account::get($account_id);
+                    if ($acc->id === null) {
+                        Flash::add('error', __('Wrong Account Id, Please get the correct Account Id from Your Beyonic Account', 'pricerrtheme'));
+                        wp_redirect(wp_get_referer());
+                        return;
+                    }
+                    $account = $acc;
+                }
+                $beyonicData = array(
+                    "phonenumber" => $phoneNo,
+                    "first_name" => $account_fname, // include if they were captured on the form
+                    "last_name" => $account_lname,
+                    "amount" => $amount,
+                    "currency" => $currency,
+                    "description" => "payment",
+                    "payment_type" => "money",
+                    "metadata" => array("id" => $row_id, 'withdrawFee' => $withdrawFee)
+                );
+                if (!isset($beyonicData['first_name'])) {
+                    $beyonicData['first_name'] = 'Kyeeyo';
+                }
+                if (!isset($beyonicData['last_name'])) {
+                    $beyonicData['last_name'] = 'user';
+                }
+                if ($callback_url) {
+                    $beyonicData = array_merge($beyonicData, ['callback_url' => $callback_url]);
+                }
+                if ($account) {
+                    if ($account->balance < $beyonicData['amount']) {
+                        Flash::add('error', __('Insufficient Account Balance, Please Add funds To the Account and try Again', 'pricerrtheme'));
+                        wp_redirect(wp_get_referer());
+                        return;
+                    }
+                    $beyonicData = array_merge($beyonicData, ['account' => $account->id]);
+                }
+                $payment = Beyonic_Payment::create($beyonicData);
+                cacheRequest(getCacheKey($row_id, true), $payment->id);// write id to cache to prevent future computations
+            }
+            $goOn = checkPayment($payment, $row_id);
+            if ($goOn === 1) { // make complete was clicked again
+                // payment complete, delete transients
+                cacheRequest(getCacheKey($row_id, true), null, true); // for id
+                cacheRequest(getCacheKey($row_id), null, true); // for status
             }
         }
+    }
+    if (isset($_GET['page'], $_GET['den_id']) && $_GET['page'] == 'withdraw-req') {
+        // request was denied, delete transients
+        $row_id = $_GET['den_id']; //TODO handle when user cancels request
+        cacheRequest(getCacheKey($row_id, true), null, true); // for id
+        cacheRequest(getCacheKey($row_id), null, true); // for status
     }
 
 }
 
-function checkPayment($payment, $row_id)
+/**
+ * @param $payment // payment object from beyonic
+ * @param $row_id // row id of job request
+ * @param bool $silent // write to DB and inform user or return result silently
+ * @return int // 0, 1, 2
+ */
+function checkPayment($payment, $row_id, $silent = false)
 {
     switch (strtolower($payment->state)) {
         case 'scheduled':
         case 'new':
-            Flash::add('info', __('Payment Has Been Queued! and Is Waiting Approval', 'pricerrtheme'));
-            Flash::add('info', __('resubmit this request to get the latest status of the payment', 'pricerrtheme'));
-            PricerrTheme_update_beyonic_payment($row_id);
-            break;
+            if (!$silent) {
+                Flash::add('info', __('Payment Has Been Queued! and Is Waiting Approval', 'pricerrtheme'));
+                Flash::add('info', __('Resubmit this request to get the latest status of the payment', 'pricerrtheme'));
+                PricerrTheme_update_beyonic_payment($row_id);
+            }
+            return 0;
         case 'processed':
-            Flash::add('info', __('Payment Completed Successfully', 'pricerrtheme'));
-            PricerrTheme_update_beyonic_payment($row_id, '1');
-            break;
+            if (!$silent) {
+                Flash::add('info', __('Payment Completed Successfully', 'pricerrtheme'));
+                PricerrTheme_update_beyonic_payment($row_id, '1');
+            }
+            return 1;
         case 'processed_with_errors':
-            Flash::add('error', __('Payment Failed!, Reason:- ' . $payment->last_error, 'pricerrtheme'));
-            PricerrTheme_update_beyonic_payment($row_id);
+            if (!$silent) {
+                Flash::add('error', __('Payment Failed!, Reason:- ' . $payment->last_error, 'pricerrtheme'));
+                PricerrTheme_update_beyonic_payment($row_id);
+            }
             break;
         case 'rejected':
-            Flash::add('error', __('Payment Failed!, Reason:- ' . $payment->rejected_reason, 'pricerrtheme'));
-            PricerrTheme_update_beyonic_payment($row_id);
+            if (!$silent) {
+                Flash::add('error', __('Payment Failed!, Reason:- ' . $payment->rejected_reason, 'pricerrtheme'));
+                PricerrTheme_update_beyonic_payment($row_id);
+            }
             break;
         case 'cancelled':
-            Flash::add('error', __('Payment Failed!, Reason:- ' . $payment->cancelled_reason, 'pricerrtheme'));
-            PricerrTheme_update_beyonic_payment($row_id);
+            if (!$silent) {
+                Flash::add('error', __('Payment Failed!, Reason:- ' . $payment->cancelled_reason, 'pricerrtheme'));
+                PricerrTheme_update_beyonic_payment($row_id);
+            }
             break;
         default:
-            Flash::add('error', __('Payment Failed!, Reason:- Unknown Error Occurred While Approving', 'pricerrtheme'));
-            PricerrTheme_update_beyonic_payment($row_id);
+            if (!$silent) {
+                Flash::add('error', __('Payment Failed!, Reason:- Unknown Error Occurred While Approving', 'pricerrtheme'));
+                PricerrTheme_update_beyonic_payment($row_id);
+            }
             break;
     }
+    return 2;
 }
 
 function compare($a, $b)
@@ -766,7 +954,7 @@ function PricerrTheme_add_new_beyonic_cnt()
                                value="<?php echo get_option('PricerrTheme_beyonic_webHook_Id'); ?>"/></td>
                 </tr>
                 <tr>
-                    <td valign=top
+                    <td valign=top><!--TODO check system currency against account currency-->
                         width="22"><?php PricerrTheme_theme_bullet('Account Id from your beyonic account - where payments will be charged'); ?></td>
                     <td><?php _e('Account Id:', 'PricerrTheme'); ?></td>
                     <td><input type="number" min="0" name="PricerrTheme_beyonic_account_Id"
