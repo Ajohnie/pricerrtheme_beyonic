@@ -1,6 +1,6 @@
 <?php
 
-require_once(__DIR__ . '/Beyonic.php');
+require_once( dirname(__FILE__) . '/Beyonic.php' );
 
 /*
   The Beyonic_Endpoint_Wrapper class provides common routines needed by

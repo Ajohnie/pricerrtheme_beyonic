@@ -1,6 +1,6 @@
 <?php
 
-require_once(__DIR__ . '/Beyonic_Exception.php');
+require_once( dirname(__FILE__) . '/Beyonic_Exception.php' );
 
 /*
   The Beyonic class provides manages the requests to the Beyonic endpoint.
@@ -115,7 +115,6 @@ class Beyonic {
     curl_setopt($ch, CURLOPT_VERBOSE, 0);
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
     curl_setopt($ch, CURLOPT_HTTPHEADER, $httpHeaders);
-
     $response = curl_exec($ch);
 
     $responseArray = array();

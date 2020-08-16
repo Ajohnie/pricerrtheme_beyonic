@@ -9,17 +9,17 @@ if (!function_exists('json_decode')) {
 }
 
 // Beyonic Primary Interface
-require_once(__DIR__ . '/Beyonic/Beyonic.php');
+require_once(dirname(__FILE__) . '/Beyonic/Beyonic.php');
 
 // Beyonic API endpoints
-require_once(__DIR__ . '/Beyonic/Endpoint_Wrapper.php');
-require_once(__DIR__ . '/Beyonic/Webhook.php');
-require_once(__DIR__ . '/Beyonic/Payment.php');
-require_once(__DIR__ . '/Beyonic/Collection.php');
-require_once(__DIR__ . '/Beyonic/Collection_Request.php');
-require_once(__DIR__ . '/Beyonic/Contact.php');
-require_once(__DIR__ . '/Beyonic/Account.php');
-require_once(__DIR__ . '/Beyonic/Transaction.php');
-require_once(__DIR__ . '/Beyonic/Currency.php');
-require_once(__DIR__ . '/Beyonic/Network.php');
-require_once(__DIR__ . '/Beyonic/Beyonic_Exception.php');
+require_once(dirname(__FILE__) . '/Beyonic/Endpoint_Wrapper.php');
+require_once(dirname(__FILE__) . '/Beyonic/Webhook.php');
+require_once(dirname(__FILE__) . '/Beyonic/Payment.php');
+require_once(dirname(__FILE__) . '/Beyonic/Collection.php');
+require_once(dirname(__FILE__) . '/Beyonic/Collection_Request.php');
+require_once(dirname(__FILE__) . '/Beyonic/Contact.php');
+require_once(dirname(__FILE__) . '/Beyonic/Account.php');
+require_once(dirname(__FILE__) . '/Beyonic/Transaction.php');
+require_once(dirname(__FILE__) . '/Beyonic/Currency.php');
+require_once(dirname(__FILE__) . '/Beyonic/Network.php');
+require_once(dirname(__FILE__) . '/Beyonic/Beyonic_Exception.php');

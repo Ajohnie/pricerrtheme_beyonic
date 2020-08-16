@@ -1,58 +1,47 @@
 <?php
+
 // make sure sessions work on the page
-if (session_status() == PHP_SESSION_NONE) {
+if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
 class Flash
 {
-
-    // where all messages are stored
-    public static $messages = array();
-
-    /*
-     * A generic function to store flash messages
-     *
-     * Flash::add('notice', 'a message to display');
-     *
-     * @param string $name the name/id of the flash
-     * @param string $message the message to display
-     */
-    public static function add($name, $message): void
+    public function add($name, $message): void
     {
         $_SESSION['flash_messages'][$name] = $message;
     }
 
-    /*
-     * A shortcut to Flash::add()
-     *
-     * Flash::notice('a message to display');
-     */
-    public static function __callStatic($fn, $args)
+    public function show(): void
     {
-        call_user_func_array(array('Flash', 'add'), array($fn, $args[0]));
-    }
-
-    public static function show(): void
-    {
-        foreach (self::$messages as $id => $msg) {
-            echo self::getMsg($id, $msg);
+        if (isset($_SESSION['flash_messages'])) {
+            $all_flash = $_SESSION['flash_messages'];
+            if (count($all_flash)) {
+                foreach ($all_flash as $id => $msg) {
+                    echo $this->getFlashMsg($id, $msg);
+                }
+            }
         }
     }
 
-    public static function getAll(): string
+    public function getAll(): string
     {
         $ret = '';
-        foreach (self::$messages as $id => $msg) {
-            $ret .= $msg;
+        if (isset($_SESSION['flash_messages'])) {
+            $all_flash = $_SESSION['flash_messages'];
+            if (count($all_flash)) {
+                foreach ($all_flash as $id => $msg) {
+                    $ret .= $msg;
+                }
+            }
         }
         return $ret;
     }
 
-    private function getMsg($id, $msg): string
+    public function getFlashMsg($id, $msg): string
     {
         // backend alert
-        if ($id == 'info') {
+        if ($id === 'info') {
             return '<div id="message" class="updated notice is-dismissible rlrsssl-htaccess">
               <p>' . $msg . '</p>
               <button type="button" class="notice-dismiss">
@@ -60,7 +49,7 @@ class Flash
               </button>
               </div>';
         }
-        if ($id == 'error') {
+        if ($id === 'error') {
             return '<div id="message" class="error notice is-dismissible rlrsssl-htaccess">
               <p>' . $msg . '</p>
               <button type="button" class="notice-dismiss">
@@ -69,21 +58,12 @@ class Flash
               </div>';
         }
         // front end alert
-        if ($id == 'fInfo') {
+        if ($id === 'fInfo') {
             return '<div class="alert alert-success"><p>' . $msg . '</p></div>';
         }
-        if ($id == 'fError') {
+        if ($id === 'fError') {
             return '<div class="alert alert-danger"><p>' . $msg . '</p></div>';
         }
         return '';
     }
 }
-
-// if $_SESSION['flash_messages'] isset
-// then save them to our class
-if (isset($_SESSION['flash_messages'])) {
-    Flash::$messages = $_SESSION['flash_messages'];
-}
-
-// reset the session's value
-$_SESSION['flash_messages'] = array();

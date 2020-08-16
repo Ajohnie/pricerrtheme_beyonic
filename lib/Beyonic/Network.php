@@ -1,6 +1,6 @@
 <?php
 
-require_once(__DIR__ . '/Endpoint_Wrapper.php');
+require_once( dirname(__FILE__) .  '/Endpoint_Wrapper.php');
 
 /*
   The Beyonic_Network class provides access to the Networks API.
