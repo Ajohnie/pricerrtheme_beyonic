@@ -1,0 +1,32 @@
+/*
+ * Copyright (c) 2020. one-tech junction. written by akankwatsa Johnson(jakankwasa.tech@yahoo.com)
+ */
+.short-popular-category-list ul li a {
+    background-color: yellowgreen;
+    border: 1px solid #179f00;
+    color: white !important;
+    font-style: bold;
+}
+
+.short-popular-category-list ul li a:hover {
+    background: green;
+    color: white !important;
+    text-decoration: none !important;
+}
+
+.menu-item-644:hover, .menu-item-371:hover {
+    background: green;
+    color: black !important;
+    text-decoration: none !important;
+}
+
+.menu-item-644, .menu-item-371 {
+    background-color: yellowgreen;
+    border: 1px solid #179f00;
+    color: white !important;
+    padding: 0 15px 5px 0;
+    border-radius: 6px;
+    margin: 0 0 0 0.5rem;
+    font-size: 14px;
+    max-height: 2rem;
+}

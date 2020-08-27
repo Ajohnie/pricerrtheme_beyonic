@@ -8,6 +8,16 @@ Author URI: mailto:jakankwasa.tech@yahoo.com
 Version: 1.0
 Text Domain: beyonic_gateways
 */
+//link to woocommerce settings
+function pricetheme_beyonic_settings_link($links)
+{
+    $link = admin_url('admin.php?page=payment-methods#tabs_beyonic');
+    $links[] = '<a href="' . $link . '">Payment Settings</a>';
+    return $links;
+}
+
+$plugin = plugin_basename(__FILE__);
+add_filter("plugin_action_links_$plugin", 'pricetheme_beyonic_settings_link');
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -114,6 +124,14 @@ function addAdminJs()
         array('ajaxUrl' => admin_url('admin-ajax.php'), 'action' => 'adminAjax', 'nonce' => wp_create_nonce('beyonic-admin-nonce'))
     );
 
+}
+
+// register javascript to handle ajax requests on front end
+add_action('wp_enqueue_scripts', 'addClientCss');
+function addClientCss()
+{
+    // add css to style buttons and other parts
+    wp_enqueue_style('beyonic-client-css', plugin_dir_url(__FILE__) . 'lib/beyonic-client.css');
 }
 
 // register javascript to handle ajax requests on front end
@@ -231,17 +249,18 @@ add_action('wp_ajax_adminAjax', 'adminAjax');
  */
 function logError($msg)
 {
-    error_log($msg);
-    /* try {
-         $mail = get_option('admin_email');
-         if ($mail) {
-             wp_mail($mail, "ERROR ON KYEEYO.COM", $msg);
-         } else {
-             error_log($msg);
-         }
-     } catch (Exception $ex) {
-         error_log($ex->getTraceAsString());
-     }*/
+    $time = date("F jS Y, H:i", time() + 25200);
+    $user = null;
+    if (function_exists('wp_get_current_user')) {
+        $user = wp_get_current_user();
+    }
+    if ($user) {
+        $time .= ' USERID: ' . $user->ID . ' ';
+    }
+    $file = plugin_dir_path(__FILE__) . '/errors.txt';
+    $open = fopen($file, "a");
+    fwrite($open, $time . '  :  ' . json_encode($msg) . "\r\n");
+    fclose($open);
 }
 
 /** caches to options table, used with ajax to keep track of status of beyonic requests
@@ -390,6 +409,7 @@ function handleCollection($request)
  */
 function checkBeyonicPermissions($request)
 {
+    // TODO complete this
     $auth = $request->get_header('authorization');
     // username set in beyonic account
     // password set in beyonic account
@@ -415,124 +435,124 @@ function getClientCacheKey($amount, $phoneNo, $id = false, $uid = null)
 function makeRequest($amount, $phoneNo, $retry = false)
 {
     /*try {*/
-        $api_key = get_option('PricerrTheme_beyonic_api_key');//api key set in admin tab of beyonic
-        if (empty($api_key)) { // api key not set, so throw error
-            showMsg(__('Account Config Error, Contact Admin!', 'pricerrtheme'));
-            logError('Api Key is not set');
+    $api_key = get_option('PricerrTheme_beyonic_api_key');//api key set in admin tab of beyonic
+    if (empty($api_key)) { // api key not set, so throw error
+        showMsg(__('Account Config Error, Contact Admin!', 'pricerrtheme'));
+        logError('Api Key is not set');
+        return null;
+    }
+    Beyonic::setApiKey($api_key);
+    $account_fname = null;
+    $account_lname = null;
+    $user = wp_get_current_user();
+    if (!isset($user)) {
+        showMsg(__('Please Login And try Again!', 'pricerrtheme'));
+        logError('Api Key is not set');
+        return null;
+    }
+    $account_fname = $user->display_name;
+    $account_lname = $user->user_nicename;
+    $phoneNo = validatePhoneNo($phoneNo);
+    if (!$phoneNo) {
+        showMsg(__('Phone No invalid or Not Supported !', 'pricerrtheme'));
+        logError('Client Entered An Invalid Phone No Client: ' . $account_fname . ' ' . $account_lname);
+        return null;
+    }
+    $currency = PricerrTheme_get_currency();
+    if (!$currency) {
+        showMsg(__('Currency Error !', 'pricerrtheme'));
+        logError('Currency Not Configured');
+        return null;
+    }
+    $callback_url = 'https://kyeeyo.com/wp-json/beyonic-api/collections';// get_site_url() . '/wp_json/beyonic-api/collections';
+    $hooks = checkWebHooks($callback_url, 'collectionrequest.status.changed');
+    if ($hooks) { // webhook exits
+        $callback_url = null;
+    }
+    $account = null;
+    $account_id = get_option('PricerrTheme_beyonic_account_Id');//account id set in admin tab of beyonic
+    if (is_numeric($account_id)) {
+        $acc = Beyonic_Account::get((int)$account_id);
+        if ($acc->id === null) {
+            showMsg(__('Account Error, contact Admin !', 'pricerrtheme'));
+            logError('Beyonic Account Id is not set');
             return null;
         }
-        Beyonic::setApiKey($api_key);
-        $account_fname = null;
-        $account_lname = null;
-        $user = wp_get_current_user();
-        if (!isset($user)) {
-            showMsg(__('Please Login And try Again!', 'pricerrtheme'));
-            logError('Api Key is not set');
+        if (strtolower($acc->status) !== 'active') {
+            showMsg(__('Account is Inactive contact Admin !', 'pricerrtheme'));
+            logError('Account Inactive !');
             return null;
         }
-        $account_fname = $user->display_name;
-        $account_lname = $user->user_nicename;
-        $phoneNo = validatePhoneNo($phoneNo);
-        if (!$phoneNo) {
-            showMsg(__('Phone No invalid or Not Supported !', 'pricerrtheme'));
-            logError('Client Entered An Invalid Phone No Client: ' . $account_fname . ' ' . $account_lname);
+        // check currency
+        if ($acc->currency !== $currency) {
+            showMsg(__('Currency Miss Match !', 'pricerrtheme'));
+            logError('Currency Miss Match !');
             return null;
         }
-        $currency = PricerrTheme_get_currency();
-        if (!$currency) {
-            showMsg(__('Currency Error !', 'pricerrtheme'));
-            logError('Currency Not Configured');
-            return null;
-        }
-        $callback_url = 'https://kyeeyo.com/wp-json/beyonic-api/collections';// get_site_url() . '/wp_json/beyonic-api/collections';
-        $hooks = checkWebHooks($callback_url, 'collectionrequest.status.changed');
-        if ($hooks) { // webhook exits
-            $callback_url = null;
-        }
-        $account = null;
-        $account_id = get_option('PricerrTheme_beyonic_account_Id');//account id set in admin tab of beyonic
-        if (is_numeric($account_id)) {
-            $acc = Beyonic_Account::get((int)$account_id);
-            if ($acc->id === null) {
-                showMsg(__('Account Error, contact Admin !', 'pricerrtheme'));
-                logError('Beyonic Account Id is not set');
-                return null;
-            }
-            if (strtolower($acc->status) !== 'active') {
-                showMsg(__('Account is Inactive contact Admin !', 'pricerrtheme'));
-                logError('Account Inactive !');
-                return null;
-            }
-            // check currency
-            if ($acc->currency !== $currency) {
-                showMsg(__('Currency Miss Match !', 'pricerrtheme'));
-                logError('Currency Miss Match !');
-                return null;
-            }
-            $account = $acc;
-        }
-        $beyonicData = array(
-            "phonenumber" => $phoneNo,
-            "first_name" => $account_fname, // include if they were captured on the form
-            "last_name" => $account_lname,
-            "amount" => $amount,
-            "currency" => $currency,
-            "reason" => "Kyeeyo Ug Top Up",
-            "send_instructions" => true,
-            'retry_interval_minutes' => null,
-            'expiry_date' => '3 minutes',
-            'max_attempts' => 0,
-            "metadata" => array("uid" => $user->ID)
-        );
-        if (!isset($beyonicData['first_name'])) {
-            $beyonicData['first_name'] = 'Kyeeyo';
-        }
-        if (!isset($beyonicData['last_name'])) {
-            $beyonicData['last_name'] = 'user';
-        }
-        if ($callback_url) {
-            $beyonicData = array_merge($beyonicData, ['callback_url' => $callback_url]);
-        }
+        $account = $acc;
+    }
+    $beyonicData = array(
+        "phonenumber" => $phoneNo,
+        "first_name" => $account_fname, // include if they were captured on the form
+        "last_name" => $account_lname,
+        "amount" => $amount,
+        "currency" => $currency,
+        "reason" => "Kyeeyo Ug Top Up",
+        "send_instructions" => true,
+        'retry_interval_minutes' => null,
+        'expiry_date' => '3 minutes',
+        'max_attempts' => 0,
+        "metadata" => array("uid" => $user->ID)
+    );
+    if (!isset($beyonicData['first_name'])) {
+        $beyonicData['first_name'] = 'Kyeeyo';
+    }
+    if (!isset($beyonicData['last_name'])) {
+        $beyonicData['last_name'] = 'user';
+    }
+    if ($callback_url) {
+        $beyonicData = array_merge($beyonicData, ['callback_url' => $callback_url]);
+    }
 
-        if ($account) {
-            $beyonicData = array_merge($beyonicData, ['account' => $account->id]);
-        } else {
-            showMsg(__('Account Not Configured !', 'pricerrtheme'));
-            logError('Account is Null or Not Configured !');
-            return null;
+    if ($account) {
+        $beyonicData = array_merge($beyonicData, ['account' => $account->id]);
+    } else {
+        showMsg(__('Account Not Configured !', 'pricerrtheme'));
+        logError('Account is Null or Not Configured !');
+        return null;
+    }
+    $collection = null;
+    // check for old collections
+    // check cache for old collection id
+    $cache_key = getClientCacheKey($amount, $phoneNo, true);
+    $old_id = cacheRequest($cache_key);
+    if (is_numeric($old_id)) {
+        $collection = Beyonic_Collection_Request::get($old_id);
+    } else {
+        // get old collection from Api
+        // get one collection to estimate total records
+        $counter = Beyonic_Collection_Request::getAll(array('limit' => 1, 'offset' => 0, 'phonenumber' => $beyonicData['phonenumber'], 'amount' => $beyonicData['amount'], 'currency' => $beyonicData['currency']));
+        // get all records matching above criteria
+        $oldCollections = Beyonic_Collection_Request::getAll(array('limit' => $counter['count'], 'offset' => 0, 'phonenumber' => $beyonicData['phonenumber'], 'amount' => $beyonicData['amount'], 'currency' => $beyonicData['currency']));
+        if (count($oldCollections['results']) > 0) {
+            // filter out collections with user id
+            $filtered = array_filter($oldCollections['results'], static function ($p) use ($user) {
+                return $p->metadata->uid === $user->ID;
+            });
+            uasort($filtered, 'compare'); // sort according to collection id
+            $keys = array_keys($filtered); // get original array indices
+            $key = $keys[count($keys) - 1]; // extract last key which is the latest
+            $collection = $oldCollections['results'][$key];
+            cacheRequest($cache_key, $collection->id); // write id to cache to prevent future computations
         }
-        $collection = null;
-        // check for old collections
-        // check cache for old collection id
-        $cache_key = getClientCacheKey($amount, $phoneNo, true);
-        $old_id = cacheRequest($cache_key);
-        if (is_numeric($old_id)) {
-            $collection = Beyonic_Collection_Request::get($old_id);
-        } else {
-            // get old collection from Api
-            // get one collection to estimate total records
-            $counter = Beyonic_Collection_Request::getAll(array('limit' => 1, 'offset' => 0, 'phonenumber' => $beyonicData['phonenumber'], 'amount' => $beyonicData['amount'], 'currency' => $beyonicData['currency']));
-            // get all records matching above criteria
-            $oldCollections = Beyonic_Collection_Request::getAll(array('limit' => $counter['count'], 'offset' => 0, 'phonenumber' => $beyonicData['phonenumber'], 'amount' => $beyonicData['amount'], 'currency' => $beyonicData['currency']));
-            if (count($oldCollections['results']) > 0) {
-                // filter out collections with user id
-                $filtered = array_filter($oldCollections['results'], static function ($p) use ($user) {
-                    return $p->metadata->uid === $user->ID;
-                });
-                uasort($filtered, 'compare'); // sort according to collection id
-                $keys = array_keys($filtered); // get original array indices
-                $key = $keys[count($keys) - 1]; // extract last key which is the latest
-                $collection = $oldCollections['results'][$key];
-                cacheRequest($cache_key, $collection->id); // write id to cache to prevent future computations
-            }
-        }
-        if ($collection && !$retry) {
-            return checkCollection($collection);
-        }
-        $collection = Beyonic_Collection_Request::create($beyonicData);
-
-        cacheRequest($cache_key, $collection->id); // write id to cache to prevent future computations
+    }
+    if ($collection && !$retry) {
         return checkCollection($collection);
+    }
+    $collection = Beyonic_Collection_Request::create($beyonicData);
+
+    cacheRequest($cache_key, $collection->id); // write id to cache to prevent future computations
+    return checkCollection($collection);
     /*} catch (Exception $ex) {
         logError($ex->getTraceAsString());
         showMsg(__('Your Request Cannot be Completed At this Time !', 'pricerrtheme'));
