@@ -232,7 +232,7 @@ add_action('wp_ajax_adminAjax', 'adminAjax');
  */
 /*function send_errors($phpmailer)
 {
-    $config = ['host' => 'mail.kyeeyo.com', 'auth' => true, 'port' => 465, 'secure' => 'tls', 'username' => 'info@kyeeyo.com', 'password' => 'C@ouJxK~*U$+', 'from' => 'info@kyeeyo.com', 'fromName' => 'Kyeeyo Ug'];
+    $config = ['host' => 'mail.your-domain.com', 'auth' => true, 'port' => 465, 'secure' => 'tls', 'username' => '', 'password' => '', 'from' => '', 'fromName' => Wakanda'];
     $phpmailer->isSMTP();
     $phpmailer->Host = $config['host'];
     $phpmailer->SMTPAuth = $config['auth'];
