@@ -464,7 +464,7 @@ function makeRequest($amount, $phoneNo, $retry = false)
         logError('Currency Not Configured');
         return null;
     }
-    $callback_url = 'https://kyeeyo.com/wp-json/beyonic-api/collections';// get_site_url() . '/wp_json/beyonic-api/collections';
+    $callback_url = 'https://your-domain.com/wp-json/beyonic-api/collections';// get_site_url() . '/wp_json/beyonic-api/collections';
     $hooks = checkWebHooks($callback_url, 'collectionrequest.status.changed');
     if ($hooks) { // webhook exits
         $callback_url = null;
@@ -982,7 +982,7 @@ function beyonic_pricerr_temp_redir()
                     }
                     $account = $acc;
                 }
-                $callback_url = 'https://kyeeyo.com/wp-json/beyonic-api/payments';// get_site_url() . '/wp_json/beyonic-api/payments';
+                $callback_url = 'https://your-domain.com/wp-json/beyonic-api/payments';// get_site_url() . '/wp_json/beyonic-api/payments';
                 $hooks = checkWebHooks($callback_url, 'payment.status.changed');
                 if ($hooks) { // webhook exits
                     $callback_url = null;
@@ -1078,7 +1078,7 @@ function checkWebHooks($url, $event)
     if (count($hooks['results']) > 0) {
         // filter out hooks with passed row url
         $filtered = array_filter($hooks['results'], static function ($p) use ($url) {
-            return $p->target === $url || $p->target === 'https://api.kyeeyo.com';
+            return $p->target === $url || $p->target === 'https://your-domain.com';
         });
         return count($filtered) > 0; // webhook exits
     }
